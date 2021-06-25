@@ -3,7 +3,6 @@ import cors from "cors";
 import pg from "pg";
 import bcrypt from "bcrypt";
 import { v4 as uuid } from "uuid";
-import dayjs from 'dayjs'
 
 const app = express();
 app.use(cors());
@@ -55,7 +54,7 @@ app.post("/sign-in", async (req, res) => {
     const user = result.rows[0]
     if (user && bcrypt.compareSync(password, user.password)) {
         const token = uuid();
-        connection.query(`INSERT INTO sessions ("userId", token)
+        await connection.query(`INSERT INTO sessions ("userId", token)
         VALUES ($1, $2)`, [user.id, token])
         res.send(token);
     } else {
@@ -78,11 +77,12 @@ app.get("/records", async (req, res) => {
         jsonb_build_object('userId', records."userId", 'date', records.date, 'description', records."description", 'value', records."value") AS records,
         jsonb_build_object('name', users."name") AS name
         FROM sessions
-        JOIN records
+        LEFT JOIN records
         ON sessions."userId" = records."userId"
         JOIN users
         ON sessions."userId" = users.id
         WHERE sessions.token = $1
+        ORDER BY records.date DESC
       `,
       [token]
     );
@@ -103,13 +103,13 @@ app.post("/records", async (req, res) => {
         const result = await connection.query(
           `
           INSERT INTO records ("userId", date, description, value)
-          SELECT (SELECT sessions."userId" from sessions WHERE token = $4),$1,$2,$3
+          SELECT (SELECT sessions."userId" from sessions WHERE token = $3),CURRENT_TIMESTAMP,$1,$2
           WHERE EXISTS(
               SELECT 1 FROM sessions
-              WHERE token = $4
+              WHERE token = $3
           )
         `,
-          [dayjs(),description, value, token]
+          [description, value, token]
         );
         res.send(result.rows);
     } catch(e){
@@ -118,4 +118,27 @@ app.post("/records", async (req, res) => {
     }
 });
 
-app.listen(4000, () => console.log("Server running on port 4000"));
+app.post("/logout", async (req, res) => {
+  try {
+    const authorization = req.headers["authorization"];
+    if (!authorization) return res.sendStatus(401);
+    const token = authorization.replace("Bearer ", "");
+    await connection.query(
+      `
+        DELETE FROM sessions 
+        WHERE token = $1
+        `,
+      [token]
+    );
+    res.sendStatus(200);
+  } catch (e) {
+    console.log(e);
+    res.sendStatus(500);
+  }
+});
+
+app.get("/teste", (req, res) => {
+    res.sendStatus(200)
+})
+
+export default app;
