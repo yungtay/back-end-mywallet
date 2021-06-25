@@ -3,6 +3,8 @@ import cors from "cors";
 import pg from "pg";
 import bcrypt from "bcrypt";
 import { v4 as uuid } from "uuid";
+import Joi from "joi";
+import { stripHtml } from "string-strip-html";
 
 const app = express();
 app.use(cors());
@@ -21,6 +23,9 @@ const connection = new Pool(databaseConfig);
 
 app.post("/sign-up", async (req, res) => {
   try {
+    cleanHTML([req.body.name, req.body.email, req.body.password]);
+    const { error } = schemaSignUp.validate(req.body);
+    if (error) return res.sendStatus(400);
     const { name, email, password } = req.body;
     const hash = bcrypt.hashSync(password, 10);
     const result = await connection.query(
@@ -33,7 +38,7 @@ app.post("/sign-up", async (req, res) => {
       [name, email, hash]
     );
     if (result.rowCount === 0) {
-      res.sendStatus(409);
+      res.sendStatus(403);
     } else {
       res.sendStatus(201);
     }
@@ -45,6 +50,9 @@ app.post("/sign-up", async (req, res) => {
 
 app.post("/sign-in", async (req, res) => {
   try {
+    cleanHTML([req.body.email, req.body.password])
+    const { error } = schemaSignIn.validate(req.body);
+    if (error) return res.sendStatus(400);
     const { email, password } = req.body;
     const result = await connection.query(
       `SELECT * FROM users
@@ -68,6 +76,7 @@ app.post("/sign-in", async (req, res) => {
 
 app.get("/records", async (req, res) => {
   try {
+    cleanHTML([req.headers["authorization"]])
     const authorization = req.headers["authorization"];
     if (!authorization) return res.sendStatus(401);
     const token = authorization.replace("Bearer ", "");
@@ -86,7 +95,8 @@ app.get("/records", async (req, res) => {
       `,
       [token]
     );
-    const resultReady = {records: result.rows.map((r) => r.records), name: result.rows[0].name.name}
+    if(result.rowCount === 0) return res.sendStatus(404)
+    const resultReady = {records: result.rows[0].records.userId ? result.rows.map((r) => r.records) : [], name: result.rows[0].name.name}
     res.send(resultReady);
   } catch (e) {
     console.log(e);
@@ -96,8 +106,11 @@ app.get("/records", async (req, res) => {
 
 app.post("/records", async (req, res) => {
     try{
+        cleanHTML([req.headers["authorization"], req.body.description ])
         const authorization = req.headers["authorization"];
         if (!authorization) return res.sendStatus(401);
+        const { error } = schemaRecords.validate(req.body);
+        if (error) return res.sendStatus(400);
         const token = authorization.replace("Bearer ", "");
         const { value, description } = req.body;
         const result = await connection.query(
@@ -108,10 +121,12 @@ app.post("/records", async (req, res) => {
               SELECT 1 FROM sessions
               WHERE token = $3
           )
+          RETURNING *
         `,
           [description, value, token]
         );
-        res.send(result.rows);
+        if(!result.rows[0]) return res.sendStatus(404)
+        res.sendStatus(200);
     } catch(e){
         console.log(e)
         res.sendStatus(500)
@@ -120,6 +135,7 @@ app.post("/records", async (req, res) => {
 
 app.post("/logout", async (req, res) => {
   try {
+    cleanHTML([req.headers["authorization"]])
     const authorization = req.headers["authorization"];
     if (!authorization) return res.sendStatus(401);
     const token = authorization.replace("Bearer ", "");
@@ -141,4 +157,30 @@ app.get("/teste", (req, res) => {
     res.sendStatus(200)
 })
 
-export default app;
+function cleanHTML(arrayHTML) {
+  arrayHTML.forEach((element) => {
+    if (element) {
+      element = stripHtml(element).result.trim();
+    }
+  });
+}
+
+export { app, connection };
+
+const schemaSignUp = Joi.object({
+  name: Joi.string().min(1).required(),
+  email: Joi.string().min(1).required(),
+  password: Joi.string().min(1).required(),
+});
+
+const schemaSignIn = Joi.object({
+  email: Joi.string().min(1).required(),
+  password: Joi.string().min(1).required(),
+});
+
+const schemaRecords = Joi.object({
+  value: Joi.number().integer().min(1).required(),
+  description: Joi.string().min(1).required(),
+});
+
+
