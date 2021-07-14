@@ -179,7 +179,7 @@ const schemaSignIn = Joi.object({
 });
 
 const schemaRecords = Joi.object({
-  value: Joi.number().integer().min(1).required(),
+  value: Joi.number().integer().invalid(0).required(),
   description: Joi.string().min(1).required(),
 });
 
